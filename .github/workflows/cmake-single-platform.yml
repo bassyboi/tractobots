@@ -1,39 +1,85 @@
-# This starter workflow is for a CMake project running on a single platform. There is a different starter workflow if you need cross-platform coverage.
-# See: https://github.com/actions/starter-workflows/blob/main/ci/cmake-multi-platform.yml
-name: CMake on a single platform
+name: Tractobots Release Workflow
 
 on:
   push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
-
-env:
-  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
-  BUILD_TYPE: Release
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
 
 jobs:
   build:
-    # The CMake configure and build commands are platform agnostic and should work equally well on Windows or Mac.
-    # You can convert this to a matrix build if you need cross-platform coverage.
-    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
 
     steps:
-    - uses: actions/checkout@v4
+      # Checkout the repository
+      - name: Checkout Code
+        uses: actions/checkout@v2
 
-    - name: Configure CMake
-      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
-      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
-      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+      # Set up ROS Kinetic environment
+      - name: Setup ROS Kinetic
+        run: |
+          sudo sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
+          curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo apt-key add -
+          sudo apt-get update
+          sudo apt-get install -y ros-kinetic-desktop-full
+          source /opt/ros/kinetic/setup.bash
+          sudo apt-get install -y python-catkin-tools
 
-    - name: Build
-      # Build your program with the given configuration
-      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+      # Install required ROS packages
+      - name: Install ROS Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ros-kinetic-mapviz ros-kinetic-mapviz-plugins ros-kinetic-tile-map ros-kinetic-robot-localization
 
-    - name: Test
-      working-directory: ${{github.workspace}}/build
-      # Execute tests defined by the CMake configuration.
-      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
-      run: ctest -C ${{env.BUILD_TYPE}}
+      # Install Docker
+      - name: Install Docker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+          sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          sudo systemctl start docker
+          sudo systemctl enable docker
+
+      # Set up MapProxy with Docker
+      - name: Setup MapProxy Docker Container
+        run: |
+          mkdir ~/mapproxy
+          sudo docker run -p 8080:8080 -d -t -v ~/mapproxy:/mapproxy danielsnider/mapproxy
+
+      # Build the Tractobots project
+      - name: Build Tractobots
+        run: |
+          git clone https://github.com/kylerlaird/tractobots.git
+          cd tractobots
+          catkin build
+          source devel/setup.bash
+
+      # Run Tests (if any)
+      - name: Run Tests
+        run: |
+          cd tractobots
+          # Add your test commands here
+          echo "Running tests..."
+          # Example: roslaunch tractobots_launchers test.launch (replace with actual test launch files)
+
+  release:
+    needs: build
+    runs-on: ubuntu-20.04
+
+    steps:
+      # Checkout the repository
+      - name: Checkout Code
+        uses: actions/checkout@v2
+
+      # Publish Release on GitHub
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            tractobots/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
